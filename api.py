@@ -1,6 +1,7 @@
 import asyncio
 import re
 import time
+from threading import Thread
 from flask import Flask, request, jsonify
 from pyrogram import Client
 from pyrogram.errors import FloodWait
@@ -8,15 +9,15 @@ from pyrogram.errors import FloodWait
 # --- Telegram config ---
 API_ID = 29969433
 API_HASH = "884f9ffa4e8ece099cccccade82effac"
-SESSION_STRING = "PASTE_YOUR_SESSION_STRING_HERE"  # generate via export_session_string
+PHONE_NUMBER = "+919214045762"
 TARGET_BOT = "@telebrecheddb_bot"
 
 # --- Client setup ---
 tg_client = Client(
-    "vercel_session",
+    "temp_session",
     api_id=API_ID,
     api_hash=API_HASH,
-    session_string=SESSION_STRING,
+    phone_number=PHONE_NUMBER,
     no_updates=True
 )
 
@@ -65,7 +66,9 @@ def parse_bot_response(text: str) -> dict:
 
 # --- Main send + receive logic ---
 async def send_and_wait(username: str) -> dict:
-    username = username.strip().lstrip("@")
+    username = username.strip()
+    if username.startswith("@"):
+        username = username[1:]
     message_to_send = f"t.me/{username}"
 
     try:
@@ -98,6 +101,7 @@ async def send_and_wait(username: str) -> dict:
 app = Flask(__name__)
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
 
+
 @app.route("/check")
 def check():
     username = request.args.get("username")
@@ -105,10 +109,43 @@ def check():
         return jsonify({"success": False, "error": "Missing 'username' parameter"}), 400
 
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_and_wait(username))
-        loop.close()
+        future = asyncio.run_coroutine_threadsafe(send_and_wait(username), tg_loop)
+        result = future.result(timeout=70)
         return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def get_free_port(default=8000):
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("", default))
+        port = s.getsockname()[1]
+    except OSError:
+        s.bind(("", 0))
+        port = s.getsockname()[1]
+    finally:
+        s.close()
+    return port
+
+
+# --- Main runner ---
+async def main():
+    global tg_loop
+    tg_loop = asyncio.get_event_loop()
+    await tg_client.start()
+    print("✅ Telegram client started successfully")
+
+    port = get_free_port(8000)
+    print(f"🌐 API running at: http://127.0.0.1:{port}/check?username=@RiteshYadav8650")
+
+    def run_flask():
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+    Thread(target=run_flask, daemon=True).start()
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
