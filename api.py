@@ -5,13 +5,11 @@ from flask import Flask, request, jsonify
 from pyrogram import Client
 from pyrogram.errors import FloodWait
 
-# --- Telegram config ---
 API_ID = 29969433
 API_HASH = "884f9ffa4e8ece099cccccade82effac"
 PHONE_NUMBER = "+919214045762"
-TARGET_BOT = "@KnightXosintbot"   # <-- patched bot handle
+TARGET_BOT = "@KnightXosintbot"
 
-# --- Client setup ---
 tg_client = Client(
     "vercel_session",
     api_id=API_ID,
@@ -20,7 +18,6 @@ tg_client = Client(
     no_updates=True
 )
 
-# --- Parser (generic English) ---
 def parse_bot_response(text: str) -> dict:
     data = {"success": True, "username": None, "id": None,
             "phone": None, "viewed_by": None, "name_history": []}
@@ -34,14 +31,8 @@ def parse_bot_response(text: str) -> dict:
     if m := re.search(r"Viewed by[:： ]*(\d+)", text):
         data["viewed_by"] = int(m.group(1))
 
-    # Example: adjust if KnightXosintbot sends history lines
-    for d, u, i in re.findall(r"(\d{2}\.\d{2}\.\d{4}) → @([\w\d_]+),\s*([\w\d, ]+)", text):
-        ids = re.findall(r"\d+", i)
-        data["name_history"].append({"date": d, "username": u, "id": ids[0] if ids else None})
-
     return data
 
-# --- Async send + receive ---
 async def send_and_wait(username: str) -> dict:
     username = username.strip().lstrip("@")
     try:
@@ -67,7 +58,6 @@ async def send_and_wait(username: str) -> dict:
         return {"success": False, "error": "No reply received from bot after 60s."}
     return parse_bot_response(reply_text)
 
-# --- Flask setup ---
 app = Flask(__name__)
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
 
