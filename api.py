@@ -5,22 +5,24 @@ from flask import Flask, request, jsonify
 from pyrogram import Client
 from pyrogram.errors import FloodWait
 
+# --- Telegram config ---
 API_ID = 29969433
 API_HASH = "884f9ffa4e8ece099cccccade82effac"
 PHONE_NUMBER = "+919214045762"
 TARGET_BOT = "@KnightXosintbot"
 
+# --- Client setup ---
 tg_client = Client(
-    "vercel_session",
+    "knightx_session",
     api_id=API_ID,
     api_hash=API_HASH,
     phone_number=PHONE_NUMBER,
     no_updates=True
 )
 
+# --- Parser (generic English) ---
 def parse_bot_response(text: str) -> dict:
-    data = {"success": True, "username": None, "id": None,
-            "phone": None, "viewed_by": None, "name_history": []}
+    data = {"success": True, "raw": text, "username": None, "id": None, "phone": None}
 
     if m := re.search(r"t\.me/([A-Za-z0-9_]+)", text):
         data["username"] = m.group(1)
@@ -28,18 +30,16 @@ def parse_bot_response(text: str) -> dict:
         data["id"] = m.group(1)
     if m := re.search(r"Phone[:： ]+(\d+)", text):
         data["phone"] = m.group(1)
-    if m := re.search(r"Viewed by[:： ]*(\d+)", text):
-        data["viewed_by"] = int(m.group(1))
 
     return data
 
-async def send_and_wait(username: str) -> dict:
-    username = username.strip().lstrip("@")
+# --- Async send + receive ---
+async def send_and_wait(command: str) -> dict:
     try:
-        sent = await tg_client.send_message(TARGET_BOT, f"t.me/{username}")
+        sent = await tg_client.send_message(TARGET_BOT, command)
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        sent = await tg_client.send_message(TARGET_BOT, f"t.me/{username}")
+        sent = await tg_client.send_message(TARGET_BOT, command)
     except Exception as e:
         return {"success": False, "error": f"Error contacting bot: {e}"}
 
@@ -58,6 +58,7 @@ async def send_and_wait(username: str) -> dict:
         return {"success": False, "error": "No reply received from bot after 60s."}
     return parse_bot_response(reply_text)
 
+# --- Flask setup ---
 app = Flask(__name__)
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
 
@@ -69,8 +70,23 @@ def init_client():
     loop.close()
     print("✅ Telegram client started")
 
-@app.route("/check")
-def check():
+@app.route("/num")
+def num_lookup():
+    number = request.args.get("number")
+    if not number:
+        return jsonify({"success": False, "error": "Missing 'number' parameter"}), 400
+
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(send_and_wait(f"/num {number}"))
+        loop.close()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/info")
+def info_lookup():
     username = request.args.get("username")
     if not username:
         return jsonify({"success": False, "error": "Missing 'username' parameter"}), 400
@@ -78,7 +94,7 @@ def check():
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_and_wait(username))
+        result = loop.run_until_complete(send_and_wait(f"/info {username}"))
         loop.close()
         return jsonify(result)
     except Exception as e:
