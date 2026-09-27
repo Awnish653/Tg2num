@@ -105,8 +105,10 @@ def check():
         return jsonify({"success": False, "error": "Missing 'username' parameter"}), 400
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         result = loop.run_until_complete(send_and_wait(username))
+        loop.close()
         return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
