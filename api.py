@@ -11,7 +11,7 @@ API_HASH = "884f9ffa4e8ece099cccccade82effac"
 PHONE_NUMBER = "+919214045762"
 TARGET_BOT = "@telebrecheddb_bot"
 
-# --- Client setup (no session string) ---
+# --- Client setup ---
 tg_client = Client(
     "vercel_session",
     api_id=API_ID,
@@ -20,6 +20,7 @@ tg_client = Client(
     no_updates=True
 )
 
+# --- Parser ---
 def parse_bot_response(text: str) -> dict:
     text = text.replace("Телефон", "Phone") \
                .replace("История изменения имени", "Name change history") \
@@ -43,6 +44,7 @@ def parse_bot_response(text: str) -> dict:
 
     return data
 
+# --- Async send + receive ---
 async def send_and_wait(username: str) -> dict:
     username = username.strip().lstrip("@")
     try:
@@ -68,8 +70,18 @@ async def send_and_wait(username: str) -> dict:
         return {"success": False, "error": "No reply received from bot after 60s."}
     return parse_bot_response(reply_text)
 
+# --- Flask setup ---
 app = Flask(__name__)
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
+
+# Start Pyrogram client once before first request
+@app.before_first_request
+def init_client():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(tg_client.start())
+    loop.close()
+    print("✅ Telegram client started")
 
 @app.route("/check")
 def check():
