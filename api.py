@@ -1,7 +1,6 @@
 import asyncio
 import re
 import time
-from threading import Thread
 from flask import Flask, request, jsonify
 from pyrogram import Client
 from pyrogram.errors import FloodWait
@@ -10,78 +9,51 @@ from pyrogram.errors import FloodWait
 API_ID = 29969433
 API_HASH = "884f9ffa4e8ece099cccccade82effac"
 PHONE_NUMBER = "+919214045762"
-TARGET_BOT = "@telebrecheddb_bot"
+TARGET_BOT = "@KnightXosintbot"   # <-- patched bot handle
 
 # --- Client setup ---
 tg_client = Client(
-    "temp_session",
+    "vercel_session",
     api_id=API_ID,
     api_hash=API_HASH,
     phone_number=PHONE_NUMBER,
     no_updates=True
 )
 
-# --- Parser for bot text ---
+# --- Parser (generic English) ---
 def parse_bot_response(text: str) -> dict:
-    text = text.replace("Телефон", "Phone") \
-               .replace("История изменения имени", "Name change history") \
-               .replace("Интересовались этим", "Viewed by")
+    data = {"success": True, "username": None, "id": None,
+            "phone": None, "viewed_by": None, "name_history": []}
 
-    data = {
-        "success": True,
-        "username": None,
-        "id": None,
-        "phone": None,
-        "viewed_by": None,
-        "name_history": []
-    }
+    if m := re.search(r"t\.me/([A-Za-z0-9_]+)", text):
+        data["username"] = m.group(1)
+    if m := re.search(r"ID[:： ]+(\d+)", text):
+        data["id"] = m.group(1)
+    if m := re.search(r"Phone[:： ]+(\d+)", text):
+        data["phone"] = m.group(1)
+    if m := re.search(r"Viewed by[:： ]*(\d+)", text):
+        data["viewed_by"] = int(m.group(1))
 
-    username_match = re.search(r"t\.me/([A-Za-z0-9_]+)", text)
-    if username_match:
-        data["username"] = username_match.group(1)
-
-    id_match = re.search(r"ID[:： ]+(\d+)", text)
-    if id_match:
-        data["id"] = id_match.group(1)
-
-    phone_match = re.search(r"Phone[:： ]+(\d+)", text)
-    if phone_match:
-        data["phone"] = phone_match.group(1)
-
-    viewed_match = re.search(r"Viewed by[:： ]*(\d+)", text)
-    if viewed_match:
-        data["viewed_by"] = int(viewed_match.group(1))
-
-    history_match = re.findall(r"(\d{2}\.\d{2}\.\d{4}) → @([\w\d_]+),\s*([\w\d, ]+)", text)
-    for d, u, i in history_match:
+    # Example: adjust if KnightXosintbot sends history lines
+    for d, u, i in re.findall(r"(\d{2}\.\d{2}\.\d{4}) → @([\w\d_]+),\s*([\w\d, ]+)", text):
         ids = re.findall(r"\d+", i)
-        data["name_history"].append({
-            "date": d,
-            "username": u,
-            "id": ids[0] if ids else None
-        })
+        data["name_history"].append({"date": d, "username": u, "id": ids[0] if ids else None})
 
     return data
 
-
-# --- Main send + receive logic ---
+# --- Async send + receive ---
 async def send_and_wait(username: str) -> dict:
-    username = username.strip()
-    if username.startswith("@"):
-        username = username[1:]
-    message_to_send = f"t.me/{username}"
-
+    username = username.strip().lstrip("@")
     try:
-        sent = await tg_client.send_message(TARGET_BOT, message_to_send)
+        sent = await tg_client.send_message(TARGET_BOT, f"t.me/{username}")
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        sent = await tg_client.send_message(TARGET_BOT, message_to_send)
+        sent = await tg_client.send_message(TARGET_BOT, f"t.me/{username}")
     except Exception as e:
         return {"success": False, "error": f"Error contacting bot: {e}"}
 
     reply_text = None
     start_time = time.time()
-
     while time.time() - start_time < 60:
         async for msg in tg_client.get_chat_history(TARGET_BOT, limit=10):
             if msg.id > sent.id and not msg.outgoing and msg.text:
@@ -93,14 +65,19 @@ async def send_and_wait(username: str) -> dict:
 
     if not reply_text:
         return {"success": False, "error": "No reply received from bot after 60s."}
-
     return parse_bot_response(reply_text)
-
 
 # --- Flask setup ---
 app = Flask(__name__)
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
 
+@app.before_first_request
+def init_client():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(tg_client.start())
+    loop.close()
+    print("✅ Telegram client started")
 
 @app.route("/check")
 def check():
@@ -109,43 +86,10 @@ def check():
         return jsonify({"success": False, "error": "Missing 'username' parameter"}), 400
 
     try:
-        future = asyncio.run_coroutine_threadsafe(send_and_wait(username), tg_loop)
-        result = future.result(timeout=70)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(send_and_wait(username))
+        loop.close()
         return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-def get_free_port(default=8000):
-    import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("", default))
-        port = s.getsockname()[1]
-    except OSError:
-        s.bind(("", 0))
-        port = s.getsockname()[1]
-    finally:
-        s.close()
-    return port
-
-
-# --- Main runner ---
-async def main():
-    global tg_loop
-    tg_loop = asyncio.get_event_loop()
-    await tg_client.start()
-    print("✅ Telegram client started successfully")
-
-    port = get_free_port(8000)
-    print(f"🌐 API running at: http://127.0.0.1:{port}/check?username=@RiteshYadav8650")
-
-    def run_flask():
-        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
-    Thread(target=run_flask, daemon=True).start()
-    await asyncio.Event().wait()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
